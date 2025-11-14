@@ -8,6 +8,7 @@ interface User {
   name: string;
   email: string;
   profile_picture: string | null;
+  is_bot?: boolean;
 }
 
 interface UserSelectorProps {
@@ -49,6 +50,7 @@ export function UserSelector({ users, selectedUserIds, onToggleUser, currentUser
 
 function UserRow({ user, isSelected, onToggle }: { user: User; isSelected: boolean; onToggle: () => void }) {
   const [imageError, setImageError] = useState(false);
+  const isBot = user.is_bot || false;
 
   return (
     <button
@@ -59,7 +61,9 @@ function UserRow({ user, isSelected, onToggle }: { user: User; isSelected: boole
       }`}
     >
       <div className="flex-shrink-0">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-semibold overflow-hidden">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold overflow-hidden ${
+          isBot ? 'bg-gradient-to-br from-purple-500 to-pink-600' : 'bg-gradient-to-br from-blue-500 to-purple-600'
+        }`}>
           {user.profile_picture && !imageError ? (
             <img
               src={user.profile_picture}
@@ -73,7 +77,14 @@ function UserRow({ user, isSelected, onToggle }: { user: User; isSelected: boole
         </div>
       </div>
       <div className="flex-1 text-left">
-        <p className="text-sm font-medium text-gray-900">{user.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-gray-900">{user.name}</p>
+          {isBot && (
+            <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full">
+              AI
+            </span>
+          )}
+        </div>
         <p className="text-xs text-gray-500">{user.email}</p>
       </div>
       <div className="flex-shrink-0">

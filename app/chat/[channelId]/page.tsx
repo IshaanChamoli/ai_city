@@ -4,14 +4,10 @@ import { createClient } from '@/lib/supabase/client';
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Sidebar } from '@/components/sidebar/Sidebar';
+import { CreateAIModal } from '@/components/chat/CreateAIModal';
+import { CreateChatModal } from '@/components/chat/CreateChatModal';
 import { getInitials } from '@/lib/utils';
-
-interface UserProfile {
-  id: string;
-  email: string;
-  name: string;
-  profile_picture: string | null;
-}
+import { useChatContext } from '@/contexts/ChatContext';
 
 interface Channel {
   id: string;
@@ -37,14 +33,14 @@ export default function ChannelPage() {
   const params = useParams();
   const channelId = params.channelId as string;
   const supabase = createClient();
+  const { userProfile, channels, loading: contextLoading } = useChatContext();
 
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [channel, setChannel] = useState<Channel | null>(null);
-  const [channels, setChannels] = useState<Channel[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [isCreateAIModalOpen, setIsCreateAIModalOpen] = useState(false);
+  const [isCreateChatModalOpen, setIsCreateChatModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
@@ -56,56 +52,33 @@ export default function ChannelPage() {
     scrollToBottom();
   }, [messages]);
 
-  // Function to load channels
-  const loadChannels = async (userId: string) => {
-    // First get channel IDs from channel_members
-    const { data: memberships, error: memberError } = await supabase
-      .from('channel_members')
-      .select('channel_id')
-      .eq('user_id', userId);
-
-    if (memberError || !memberships || memberships.length === 0) {
-      setChannels([]);
-      return;
-    }
-
-    // Then get the channel details
-    const channelIds = memberships.map((m) => m.channel_id);
-
-    const { data: channelsData } = await supabase
-      .from('channels')
-      .select('id, name, is_group, created_at')
-      .in('id', channelIds)
-      .order('created_at', { ascending: false });
-
-    if (channelsData) {
-      setChannels(channelsData);
-    }
-  };
-
-  // Load initial data
+  // Load channel-specific data when channelId changes
   useEffect(() => {
-    const loadData = async () => {
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser();
+    if (!userProfile) return;
 
-      if (!user) {
-        router.push('/');
+    const loadChannelData = async () => {
+      // Optimistic update: Find channel from sidebar data
+      const optimisticChannel = channels.find(c => c.id === channelId);
+      if (optimisticChannel) {
+        setChannel(optimisticChannel);
+      }
+
+      // Check if user is a member of this channel (security check)
+      const { data: membership } = await supabase
+        .from('channel_members')
+        .select('id')
+        .eq('channel_id', channelId)
+        .eq('user_id', userProfile.id)
+        .single();
+
+      if (!membership) {
+        // User is not a member, redirect to main chat
+        console.error('Unauthorized access to channel');
+        router.push('/chat');
         return;
       }
 
-      // Fetch user profile
-      const { data: profile } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
-      if (profile) {
-        setUserProfile(profile);
-      }
-
-      // Fetch channel details
+      // Fetch full channel details (in case sidebar data was stale)
       const { data: channelData } = await supabase
         .from('channels')
         .select('*')
@@ -115,9 +88,6 @@ export default function ChannelPage() {
       if (channelData) {
         setChannel(channelData);
       }
-
-      // Load channels
-      await loadChannels(user.id);
 
       // Fetch messages with sender info
       const { data: messagesData } = await supabase
@@ -137,39 +107,12 @@ export default function ChannelPage() {
         .order('created_at', { ascending: true });
 
       if (messagesData) {
-        setMessages(messagesData as Message[]);
+        setMessages(messagesData as any);
       }
-
-      setLoading(false);
     };
 
-    loadData();
-  }, [channelId, router, supabase]);
-
-  // Real-time subscription for channel list updates
-  useEffect(() => {
-    if (!userProfile) return;
-
-    const channelSub = supabase
-      .channel('channel_members_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'channel_members',
-          filter: `user_id=eq.${userProfile.id}`,
-        },
-        () => {
-          loadChannels(userProfile.id);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channelSub);
-    };
-  }, [userProfile, supabase]);
+    loadChannelData();
+  }, [channelId, userProfile, channels, router, supabase]);
 
   // Real-time subscription for new messages
   useEffect(() => {
@@ -218,6 +161,18 @@ export default function ChannelPage() {
 
     setSending(true);
     try {
+      // Security check: verify user is still a member before sending
+      const { data: membership } = await supabase
+        .from('channel_members')
+        .select('id')
+        .eq('channel_id', channelId)
+        .eq('user_id', userProfile.id)
+        .single();
+
+      if (!membership) {
+        throw new Error('You are not authorized to send messages in this channel');
+      }
+
       const { error } = await supabase.from('messages').insert({
         channel_id: channelId,
         sender_id: userProfile.id,
@@ -227,36 +182,53 @@ export default function ChannelPage() {
       if (error) throw error;
 
       setNewMessage('');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error sending message:', err);
+      if (err.message.includes('not authorized')) {
+        router.push('/chat');
+      }
     } finally {
       setSending(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div>Loading...</div>
-      </div>
-    );
-  }
+  const handleAICreated = (aiUserId: string) => {
+    console.log('AI bot created:', aiUserId);
+    // Just close modal, user can now add this AI to channels
+  };
 
-  if (!userProfile || !channel) {
-    return null;
-  }
+  const handleChannelCreated = (channelId: string) => {
+    // Navigate to the newly created channel
+    router.push(`/chat/${channelId}`);
+  };
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar
-        userName={userProfile.name}
-        userProfilePicture={userProfile.profile_picture}
-        onCreateChat={() => {}}
-        channels={channels}
-      />
+      {/* Sidebar - rendered from context */}
+      {userProfile && !contextLoading ? (
+        <Sidebar
+          userName={userProfile.name}
+          userProfilePicture={userProfile.profile_picture}
+          onCreateChat={() => setIsCreateChatModalOpen(true)}
+          onCreateAI={() => setIsCreateAIModalOpen(true)}
+          channels={channels}
+        />
+      ) : (
+        <aside className="w-80 bg-white border-r border-gray-200 flex flex-col h-screen">
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-gray-500">Loading...</div>
+          </div>
+        </aside>
+      )}
 
       {/* Main Chat Area */}
       <main className="flex-1 flex flex-col bg-white">
+        {!channel ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-gray-500">Loading channel...</div>
+          </div>
+        ) : (
+          <>
         {/* Channel Header */}
         <div className="border-b border-gray-200 p-4">
           <h2 className="text-xl font-semibold text-gray-900">
@@ -266,12 +238,7 @@ export default function ChannelPage() {
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.length === 0 ? (
-            <div className="text-center text-gray-500 mt-8">
-              <p>No messages yet. Start the conversation!</p>
-            </div>
-          ) : (
-            messages.map((message) => {
+          {messages.map((message) => {
               const isOwnMessage = message.sender_id === userProfile?.id;
               const isBot = message.users.is_bot;
 
@@ -322,8 +289,7 @@ export default function ChannelPage() {
                   </div>
                 </div>
               );
-            })
-          )}
+            })}
           <div ref={messagesEndRef} />
         </div>
 
@@ -347,7 +313,25 @@ export default function ChannelPage() {
             </button>
           </form>
         </div>
+        </>
+        )}
       </main>
+
+      {/* Create Chat Modal */}
+      <CreateChatModal
+        isOpen={isCreateChatModalOpen}
+        onClose={() => setIsCreateChatModalOpen(false)}
+        currentUserId={userProfile?.id || ''}
+        onChannelCreated={handleChannelCreated}
+      />
+
+      {/* Create AI Modal */}
+      <CreateAIModal
+        isOpen={isCreateAIModalOpen}
+        onClose={() => setIsCreateAIModalOpen(false)}
+        currentUserId={userProfile?.id || ''}
+        onAICreated={handleAICreated}
+      />
     </div>
   );
 }

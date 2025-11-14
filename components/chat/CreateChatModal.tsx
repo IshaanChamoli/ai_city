@@ -35,10 +35,11 @@ export function CreateChatModal({ isOpen, onClose, currentUserId, onChannelCreat
   }, [isOpen]);
 
   const loadUsers = async () => {
+    // Fetch ALL users (humans and AI bots)
     const { data } = await supabase
       .from('users')
-      .select('id, name, email, profile_picture')
-      .eq('is_bot', false)
+      .select('id, name, email, profile_picture, is_bot')
+      .order('is_bot', { ascending: true })  // Humans first, then bots
       .order('name');
 
     if (data) {
