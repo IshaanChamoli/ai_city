@@ -209,18 +209,12 @@ WITH CHECK (auth.uid() = created_by);
 
 ### Channel Members Policies:
 
-**1. View members of your channels:**
+**1. View your own memberships:**
 ```sql
-CREATE POLICY "Users can view members of their channels"
+CREATE POLICY "Users can view their own memberships"
 ON public.channel_members FOR SELECT
 TO authenticated
-USING (
-  EXISTS (
-    SELECT 1 FROM public.channel_members AS cm
-    WHERE cm.channel_id = channel_members.channel_id
-    AND cm.user_id = auth.uid()
-  )
-);
+USING (user_id = auth.uid());
 ```
 
 **2. Add members (channel creators only):**
@@ -236,6 +230,8 @@ WITH CHECK (
   )
 );
 ```
+
+**Note:** The SELECT policy is intentionally simple to avoid infinite recursion. Users can only see their own membership records. To view other members of a channel, query through the channels table where you have membership.
 
 ### Messages Policies:
 
