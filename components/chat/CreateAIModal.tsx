@@ -42,6 +42,9 @@ export function CreateAIModal({ isOpen, onClose, currentUserId, onAICreated }: C
     setLoading(true);
 
     try {
+      // Enhance system prompt with response length guidance
+      const enhancedPrompt = `${systemPrompt.trim()}\n\nIMPORTANT: Keep responses slightly short, one sentence max like someone would in a casual chat, unless you clearly need to write more (such as when a long answer is required to explain something properly or when explicitly asked for details).`;
+
       // Create AI user in users table
       const { data: aiUser, error: aiError } = await supabase
         .from('users')
@@ -49,7 +52,7 @@ export function CreateAIModal({ isOpen, onClose, currentUserId, onAICreated }: C
           name: aiName.trim(),
           email: `${aiName.toLowerCase().replace(/\s+/g, '_')}_${Date.now()}@ai.bot`,
           is_bot: true,
-          system_prompt: systemPrompt.trim(),
+          system_prompt: enhancedPrompt,
           model: selectedModel,
           profile_picture: null,
         })

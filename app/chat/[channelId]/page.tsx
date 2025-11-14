@@ -6,21 +6,16 @@ import { useRouter, useParams } from 'next/navigation';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { CreateAIModal } from '@/components/chat/CreateAIModal';
 import { CreateChatModal } from '@/components/chat/CreateChatModal';
+import { EditMembersModal } from '@/components/chat/EditMembersModal';
+import { MentionInput } from '@/components/chat/MentionInput';
 import { getInitials } from '@/lib/utils';
 import { useChatContext } from '@/contexts/ChatContext';
-import { MentionAutocomplete } from '@/components/chat/MentionAutocomplete';
 
 interface Channel {
   id: string;
   name: string | null;
   is_group: boolean;
   created_at: string;
-}
-
-interface Bot {
-  id: string;
-  name: string;
-  profile_picture: string | null;
 }
 
 interface Message {
@@ -48,13 +43,8 @@ export default function ChannelPage() {
   const [sending, setSending] = useState(false);
   const [isCreateAIModalOpen, setIsCreateAIModalOpen] = useState(false);
   const [isCreateChatModalOpen, setIsCreateChatModalOpen] = useState(false);
-  const [channelBots, setChannelBots] = useState<Bot[]>([]);
-  const [showMentionAutocomplete, setShowMentionAutocomplete] = useState(false);
-  const [filteredBots, setFilteredBots] = useState<Bot[]>([]);
-  const [mentionSearch, setMentionSearch] = useState('');
-  const [cursorPosition, setCursorPosition] = useState(0);
+  const [isEditMembersModalOpen, setIsEditMembersModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -64,6 +54,38 @@ export default function ChannelPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Check for @ mentions in message
+  const checkForMentions = async (content: string): Promise<string[]> => {
+    // Get all AI bots in this channel
+    const { data: memberBots } = await supabase
+      .from('channel_members')
+      .select(`
+        user_id,
+        users:user_id (
+          id,
+          name,
+          is_bot
+        )
+      `)
+      .eq('channel_id', channelId);
+
+    if (!memberBots) return [];
+
+    const bots = memberBots
+      .map((m: any) => m.users)
+      .filter((u: any) => u && u.is_bot);
+
+    // Check which bots are mentioned with @
+    const mentionedBotIds: string[] = [];
+    bots.forEach((bot: any) => {
+      if (content.includes(`@${bot.name}`)) {
+        mentionedBotIds.push(bot.id);
+      }
+    });
+
+    return mentionedBotIds;
+  };
 
   // Load channel-specific data when channelId changes
   useEffect(() => {
@@ -123,31 +145,6 @@ export default function ChannelPage() {
         setMessages(messagesData as any);
       }
 
-      // Fetch AI bots in this channel
-      const { data: memberBots } = await supabase
-        .from('channel_members')
-        .select(`
-          user_id,
-          users:user_id (
-            id,
-            name,
-            profile_picture,
-            is_bot
-          )
-        `)
-        .eq('channel_id', channelId);
-
-      if (memberBots) {
-        const bots = memberBots
-          .map((m: any) => m.users)
-          .filter((u: any) => u && u.is_bot)
-          .map((u: any) => ({
-            id: u.id,
-            name: u.name,
-            profile_picture: u.profile_picture,
-          }));
-        setChannelBots(bots);
-      }
     };
 
     loadChannelData();
@@ -194,64 +191,14 @@ export default function ChannelPage() {
     };
   }, [channelId, supabase]);
 
-  // Handle input change and @ mention detection
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    const cursorPos = e.target.selectionStart || 0;
-
-    setNewMessage(value);
-    setCursorPosition(cursorPos);
-
-    // Check for @ mention
-    const textBeforeCursor = value.slice(0, cursorPos);
-    const atIndex = textBeforeCursor.lastIndexOf('@');
-
-    if (atIndex !== -1 && (atIndex === 0 || textBeforeCursor[atIndex - 1] === ' ')) {
-      const searchTerm = textBeforeCursor.slice(atIndex + 1).toLowerCase();
-      setMentionSearch(searchTerm);
-
-      const filtered = channelBots.filter(bot =>
-        bot.name.toLowerCase().includes(searchTerm)
-      );
-
-      setFilteredBots(filtered);
-      setShowMentionAutocomplete(filtered.length > 0);
-    } else {
-      setShowMentionAutocomplete(false);
-    }
-  };
-
-  // Handle bot selection from autocomplete
-  const handleBotSelect = (bot: Bot) => {
-    const textBeforeCursor = newMessage.slice(0, cursorPosition);
-    const atIndex = textBeforeCursor.lastIndexOf('@');
-    const textAfterCursor = newMessage.slice(cursorPosition);
-
-    const newText = newMessage.slice(0, atIndex) + `@${bot.name} ` + textAfterCursor;
-    setNewMessage(newText);
-    setShowMentionAutocomplete(false);
-
-    // Focus back on input
-    setTimeout(() => {
-      inputRef.current?.focus();
-    }, 0);
-  };
-
-  // Extract mentioned bot IDs from message
-  const extractMentionedBots = (content: string): string[] => {
-    const mentionedBotIds: string[] = [];
-
-    channelBots.forEach(bot => {
-      if (content.includes(`@${bot.name}`)) {
-        mentionedBotIds.push(bot.id);
-      }
-    });
-
-    return mentionedBotIds;
-  };
-
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newMessage.trim() || !userProfile || sending) return;
+
+    await sendMessage();
+  };
+
+  const sendMessage = async () => {
     if (!newMessage.trim() || !userProfile || sending) return;
 
     setSending(true);
@@ -280,19 +227,26 @@ export default function ChannelPage() {
       if (error) throw error;
 
       setNewMessage('');
-      setShowMentionAutocomplete(false);
 
-      // Check for mentioned bots
-      const mentionedBotIds = extractMentionedBots(messageContent);
-
-      if (mentionedBotIds.length > 0) {
-        // Get recent messages for context
-        const recentMessages = messages.slice(-10).map(msg => ({
+      // Get recent messages for context (including the new message we just sent)
+      const recentMessages = [
+        ...messages.slice(-10).map(msg => ({
           sender_name: msg.users.name,
           content: msg.content,
-        }));
+          is_bot: msg.users.is_bot,
+        })),
+        {
+          sender_name: userProfile.name,
+          content: messageContent,
+          is_bot: false,
+        }
+      ];
 
-        // Trigger AI responses for each mentioned bot
+      // Check for explicit @ mentions
+      const mentionedBotIds = await checkForMentions(messageContent);
+
+      if (mentionedBotIds.length > 0) {
+        // User explicitly tagged bot(s), trigger them directly
         for (const botId of mentionedBotIds) {
           try {
             await fetch('/api/ai-reply', {
@@ -306,8 +260,42 @@ export default function ChannelPage() {
               }),
             });
           } catch (aiError) {
-            console.error('Error triggering AI bot:', aiError);
+            console.error('Error triggering mentioned bot:', aiError);
           }
+        }
+      } else {
+        // No explicit mention, ask the orchestrator if any AI should respond
+        try {
+          const orchestratorResponse = await fetch('/api/ai-orchestrator', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              channelId,
+              newMessage: {
+                sender_name: userProfile.name,
+                content: messageContent,
+              },
+              recentMessages,
+            }),
+          });
+
+          const orchestratorData = await orchestratorResponse.json();
+
+          if (orchestratorData.shouldRespond && orchestratorData.botId) {
+            // Trigger the selected AI bot to respond
+            await fetch('/api/ai-reply', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                botId: orchestratorData.botId,
+                channelId,
+                messageContent,
+                recentMessages,
+              }),
+            });
+          }
+        } catch (aiError) {
+          console.error('Error with AI orchestration:', aiError);
         }
       }
     } catch (err: any) {
@@ -358,10 +346,19 @@ export default function ChannelPage() {
         ) : (
           <>
         {/* Channel Header */}
-        <div className="border-b border-gray-200 p-4">
+        <div className="border-b border-gray-200 p-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-gray-900">
             {channel.name || 'Direct Message'}
           </h2>
+          <button
+            onClick={() => setIsEditMembersModalOpen(true)}
+            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            Edit Members
+          </button>
         </div>
 
         {/* Messages Area */}
@@ -412,7 +409,25 @@ export default function ChannelPage() {
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-100 text-gray-900'
                     }`}>
-                      <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                      <p className="text-sm whitespace-pre-wrap break-words">
+                        {message.content.split(/(@\w+)/g).map((part, i) => {
+                          if (part.startsWith('@')) {
+                            return (
+                              <span
+                                key={i}
+                                className={`font-semibold ${
+                                  isOwnMessage
+                                    ? 'text-purple-200'
+                                    : 'text-purple-600'
+                                }`}
+                              >
+                                {part}
+                              </span>
+                            );
+                          }
+                          return part;
+                        })}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -422,23 +437,14 @@ export default function ChannelPage() {
         </div>
 
         {/* Message Input */}
-        <div className="border-t border-gray-200 p-4 relative">
-          {showMentionAutocomplete && (
-            <MentionAutocomplete
-              bots={filteredBots}
-              onSelect={handleBotSelect}
-              position={{ top: 60, left: 16 }}
-            />
-          )}
+        <div className="border-t border-gray-200 p-4">
           <form onSubmit={handleSendMessage} className="flex gap-2">
-            <input
-              ref={inputRef}
-              type="text"
+            <MentionInput
               value={newMessage}
-              onChange={handleInputChange}
-              placeholder="Type a message... (use @ to mention AI bots)"
+              onChange={setNewMessage}
+              onSubmit={sendMessage}
               disabled={sending}
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
+              channelId={channelId}
             />
             <button
               type="submit"
@@ -468,6 +474,17 @@ export default function ChannelPage() {
         currentUserId={userProfile?.id || ''}
         onAICreated={handleAICreated}
       />
+
+      {/* Edit Members Modal */}
+      {channel && (
+        <EditMembersModal
+          isOpen={isEditMembersModalOpen}
+          onClose={() => setIsEditMembersModalOpen(false)}
+          channelId={channelId}
+          channelName={channel.name}
+          currentUserId={userProfile?.id || ''}
+        />
+      )}
     </div>
   );
 }
