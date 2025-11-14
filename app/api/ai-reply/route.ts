@@ -10,9 +10,9 @@ const openrouter = new OpenAI({
 
 // Model mapping for OpenRouter
 const MODEL_MAP = {
-  gpt: 'openai/gpt-4-turbo',
-  claude: 'anthropic/claude-3.5-sonnet',
-  gemini: 'google/gemini-pro-1.5',
+  gpt: 'openai/gpt-5.1-chat',
+  claude: 'anthropic/claude-sonnet-4',
+  gemini: 'google/gemini-2.5-flash',
 };
 
 export async function POST(request: NextRequest) {
