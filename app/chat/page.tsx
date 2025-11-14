@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { CreateChatModal } from '@/components/chat/CreateChatModal';
 import { CreateAIModal } from '@/components/chat/CreateAIModal';
+import { CreateDMModal } from '@/components/chat/CreateDMModal';
 import { useChatContext } from '@/contexts/ChatContext';
 
 export default function ChatPage() {
@@ -12,6 +13,7 @@ export default function ChatPage() {
   const { userProfile, channels, loading } = useChatContext();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCreateAIModalOpen, setIsCreateAIModalOpen] = useState(false);
+  const [isCreateDMModalOpen, setIsCreateDMModalOpen] = useState(false);
 
   const handleChannelCreated = (channelId: string) => {
     // Navigate to the newly created channel
@@ -42,6 +44,7 @@ export default function ChatPage() {
         userProfilePicture={userProfile.profile_picture}
         onCreateChat={() => setIsCreateModalOpen(true)}
         onCreateAI={() => setIsCreateAIModalOpen(true)}
+        onCreateDM={() => setIsCreateDMModalOpen(true)}
         channels={channels}
       />
 
@@ -52,9 +55,17 @@ export default function ChatPage() {
             Welcome, {userProfile.name}!
           </h2>
           <p className="text-gray-600 mb-4">
-            Click "Create Group Chat" to start a conversation
+            Click "Direct Messages" or "Create Group Chat" to start a conversation
           </p>
         </div>
+
+        {/* Create DM Modal */}
+        <CreateDMModal
+          isOpen={isCreateDMModalOpen}
+          onClose={() => setIsCreateDMModalOpen(false)}
+          currentUserId={userProfile.id}
+          onDMCreated={handleChannelCreated}
+        />
 
         {/* Create Chat Modal - positioned relative to main area */}
         <CreateChatModal

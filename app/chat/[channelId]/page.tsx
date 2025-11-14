@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { CreateAIModal } from '@/components/chat/CreateAIModal';
 import { CreateChatModal } from '@/components/chat/CreateChatModal';
+import { CreateDMModal } from '@/components/chat/CreateDMModal';
 import { EditMembersModal } from '@/components/chat/EditMembersModal';
 import { MentionInput } from '@/components/chat/MentionInput';
 import { getInitials } from '@/lib/utils';
@@ -16,6 +17,7 @@ interface Channel {
   name: string | null;
   is_group: boolean;
   created_at: string;
+  other_user_name?: string;
 }
 
 interface Message {
@@ -43,6 +45,7 @@ export default function ChannelPage() {
   const [sending, setSending] = useState(false);
   const [isCreateAIModalOpen, setIsCreateAIModalOpen] = useState(false);
   const [isCreateChatModalOpen, setIsCreateChatModalOpen] = useState(false);
+  const [isCreateDMModalOpen, setIsCreateDMModalOpen] = useState(false);
   const [isEditMembersModalOpen, setIsEditMembersModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -121,6 +124,30 @@ export default function ChannelPage() {
         .single();
 
       if (channelData) {
+        // If it's a DM, fetch the other user's name
+        if (!channelData.is_group) {
+          const { data: members } = await supabase
+            .from('channel_members')
+            .select(`
+              user_id,
+              users:user_id (
+                name
+              )
+            `)
+            .eq('channel_id', channelId);
+
+          if (members) {
+            const otherMember = members.find((m: any) => m.user_id !== userProfile.id);
+            if (otherMember && otherMember.users) {
+              setChannel({
+                ...channelData,
+                other_user_name: (otherMember.users as any).name,
+              });
+              return;
+            }
+          }
+        }
+
         setChannel(channelData);
       }
 
@@ -242,6 +269,44 @@ export default function ChannelPage() {
         }
       ];
 
+      // Check if this is a DM (not a group chat)
+      if (channel && !channel.is_group) {
+        // In DMs, check if the other user is a bot
+        const { data: members } = await supabase
+          .from('channel_members')
+          .select(`
+            user_id,
+            users:user_id (
+              id,
+              is_bot
+            )
+          `)
+          .eq('channel_id', channelId);
+
+        if (members) {
+          const otherMember = members.find((m: any) => m.user_id !== userProfile.id);
+          if (otherMember && otherMember.users && (otherMember.users as any).is_bot) {
+            // This is a DM with a bot - bot always responds
+            try {
+              await fetch('/api/ai-reply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  botId: otherMember.user_id,
+                  channelId,
+                  messageContent,
+                  recentMessages,
+                }),
+              });
+            } catch (aiError) {
+              console.error('Error triggering bot in DM:', aiError);
+            }
+            return; // Exit early, no need for orchestrator in DMs
+          }
+        }
+      }
+
+      // For group chats, use the normal flow
       // Check for explicit @ mentions
       const mentionedBotIds = await checkForMentions(messageContent);
 
@@ -327,6 +392,7 @@ export default function ChannelPage() {
           userProfilePicture={userProfile.profile_picture}
           onCreateChat={() => setIsCreateChatModalOpen(true)}
           onCreateAI={() => setIsCreateAIModalOpen(true)}
+          onCreateDM={() => setIsCreateDMModalOpen(true)}
           channels={channels}
         />
       ) : (
@@ -348,17 +414,19 @@ export default function ChannelPage() {
         {/* Channel Header */}
         <div className="border-b border-gray-200 p-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-gray-900">
-            {channel.name || 'Direct Message'}
+            {channel.name || (channel.other_user_name || 'Direct Chat')}
           </h2>
-          <button
-            onClick={() => setIsEditMembersModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            Edit Members
-          </button>
+          {channel.is_group && (
+            <button
+              onClick={() => setIsEditMembersModalOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              Edit Members
+            </button>
+          )}
         </div>
 
         {/* Messages Area */}
@@ -458,6 +526,14 @@ export default function ChannelPage() {
         </>
         )}
       </main>
+
+      {/* Create DM Modal */}
+      <CreateDMModal
+        isOpen={isCreateDMModalOpen}
+        onClose={() => setIsCreateDMModalOpen(false)}
+        currentUserId={userProfile?.id || ''}
+        onDMCreated={handleChannelCreated}
+      />
 
       {/* Create Chat Modal */}
       <CreateChatModal

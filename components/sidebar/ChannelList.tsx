@@ -7,6 +7,7 @@ interface Channel {
   name: string | null;
   is_group: boolean;
   created_at: string;
+  other_user_name?: string;
 }
 
 interface ChannelListProps {
@@ -79,10 +80,10 @@ export function ChannelList({ channels }: ChannelListProps) {
                 <p className={`text-sm font-medium truncate ${
                   isActive ? 'text-blue-600' : 'text-gray-900'
                 }`}>
-                  {channel.name || 'Direct Message'}
+                  {channel.name || (channel.other_user_name ? `${channel.other_user_name}` : 'Direct Chat')}
                 </p>
                 <p className="text-xs text-gray-500">
-                  {channel.is_group ? 'Group' : 'DM'}
+                  {channel.is_group ? 'Group' : 'Direct'}
                 </p>
               </div>
             </div>

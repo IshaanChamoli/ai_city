@@ -16,6 +16,7 @@ interface Channel {
   name: string | null;
   is_group: boolean;
   created_at: string;
+  other_user_name?: string; // For DMs, the name of the other user
 }
 
 interface ChatContextType {
@@ -59,7 +60,36 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       .order('created_at', { ascending: false });
 
     if (channelsData) {
-      setChannels(channelsData);
+      // For DM channels, fetch the other user's name
+      const channelsWithNames = await Promise.all(
+        channelsData.map(async (channel) => {
+          if (!channel.is_group) {
+            // This is a DM, get the other user's name
+            const { data: members } = await supabase
+              .from('channel_members')
+              .select(`
+                user_id,
+                users:user_id (
+                  name
+                )
+              `)
+              .eq('channel_id', channel.id);
+
+            if (members) {
+              const otherMember = members.find((m: any) => m.user_id !== userProfile.id);
+              if (otherMember && otherMember.users) {
+                return {
+                  ...channel,
+                  other_user_name: (otherMember.users as any).name,
+                };
+              }
+            }
+          }
+          return channel;
+        })
+      );
+
+      setChannels(channelsWithNames);
     }
   };
 
