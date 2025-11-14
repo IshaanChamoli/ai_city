@@ -50,6 +50,28 @@ export function MentionInput({ value, onChange, onSubmit, disabled, channelId }:
     };
 
     loadBots();
+
+    // Subscribe to channel member changes
+    const channel = supabase
+      .channel(`channel_members:${channelId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'channel_members',
+          filter: `channel_id=eq.${channelId}`,
+        },
+        () => {
+          // Reload bots when members change
+          loadBots();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [channelId, supabase]);
 
   // Handle input change and detect @ mentions
@@ -138,7 +160,7 @@ export function MentionInput({ value, onChange, onSubmit, disabled, channelId }:
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder="Type a message... (use @ to mention AI bots)"
+        placeholder="Type a message... (bots respond automatically, use @ to tag specific ones)"
         disabled={disabled}
         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
         autoComplete="off"

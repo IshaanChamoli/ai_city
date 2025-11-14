@@ -15,10 +15,11 @@ interface SidebarProps {
   userProfilePicture?: string | null;
   onCreateChat: () => void;
   onCreateAI: () => void;
+  onCreateDM: () => void;
   channels?: Channel[];
 }
 
-export function Sidebar({ userName, userProfilePicture, onCreateChat, onCreateAI, channels = [] }: SidebarProps) {
+export function Sidebar({ userName, userProfilePicture, onCreateChat, onCreateAI, onCreateDM, channels = [] }: SidebarProps) {
   return (
     <aside className="w-80 bg-white border-r border-gray-200 flex flex-col h-screen">
       {/* Header */}
