@@ -82,20 +82,33 @@ export function CreateChatModal({ isOpen, onClose, currentUserId, onChannelCreat
         .select()
         .single();
 
-      if (channelError) throw channelError;
+      if (channelError) {
+        console.error('Channel creation error:', channelError);
+        throw channelError;
+      }
+
+      console.log('Channel created successfully:', channel);
 
       // 2. Add current user + selected users as members
       const memberIds = [currentUserId, ...selectedUserIds];
-      const { error: membersError } = await supabase
+      console.log('Adding members:', memberIds);
+
+      const { data: membersData, error: membersError } = await supabase
         .from('channel_members')
         .insert(
           memberIds.map(userId => ({
             channel_id: channel.id,
             user_id: userId,
           }))
-        );
+        )
+        .select();
 
-      if (membersError) throw membersError;
+      if (membersError) {
+        console.error('Members insertion error:', membersError);
+        throw membersError;
+      }
+
+      console.log('Members added successfully:', membersData);
 
       // Success!
       onChannelCreated(channel.id);

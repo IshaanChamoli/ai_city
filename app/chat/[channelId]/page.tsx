@@ -17,6 +17,7 @@ interface Channel {
   id: string;
   name: string | null;
   is_group: boolean;
+  created_at: string;
 }
 
 interface Message {
@@ -39,6 +40,7 @@ export default function ChannelPage() {
 
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [channel, setChannel] = useState<Channel | null>(null);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -53,6 +55,33 @@ export default function ChannelPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Function to load channels
+  const loadChannels = async (userId: string) => {
+    // First get channel IDs from channel_members
+    const { data: memberships, error: memberError } = await supabase
+      .from('channel_members')
+      .select('channel_id')
+      .eq('user_id', userId);
+
+    if (memberError || !memberships || memberships.length === 0) {
+      setChannels([]);
+      return;
+    }
+
+    // Then get the channel details
+    const channelIds = memberships.map((m) => m.channel_id);
+
+    const { data: channelsData } = await supabase
+      .from('channels')
+      .select('id, name, is_group, created_at')
+      .in('id', channelIds)
+      .order('created_at', { ascending: false });
+
+    if (channelsData) {
+      setChannels(channelsData);
+    }
+  };
 
   // Load initial data
   useEffect(() => {
@@ -87,6 +116,9 @@ export default function ChannelPage() {
         setChannel(channelData);
       }
 
+      // Load channels
+      await loadChannels(user.id);
+
       // Fetch messages with sender info
       const { data: messagesData } = await supabase
         .from('messages')
@@ -113,6 +145,31 @@ export default function ChannelPage() {
 
     loadData();
   }, [channelId, router, supabase]);
+
+  // Real-time subscription for channel list updates
+  useEffect(() => {
+    if (!userProfile) return;
+
+    const channelSub = supabase
+      .channel('channel_members_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'channel_members',
+          filter: `user_id=eq.${userProfile.id}`,
+        },
+        () => {
+          loadChannels(userProfile.id);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channelSub);
+    };
+  }, [userProfile, supabase]);
 
   // Real-time subscription for new messages
   useEffect(() => {
@@ -195,6 +252,7 @@ export default function ChannelPage() {
         userName={userProfile.name}
         userProfilePicture={userProfile.profile_picture}
         onCreateChat={() => {}}
+        channels={channels}
       />
 
       {/* Main Chat Area */}
