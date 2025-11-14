@@ -8,12 +8,19 @@ import { CreateAIModal } from '@/components/chat/CreateAIModal';
 import { CreateChatModal } from '@/components/chat/CreateChatModal';
 import { getInitials } from '@/lib/utils';
 import { useChatContext } from '@/contexts/ChatContext';
+import { MentionAutocomplete } from '@/components/chat/MentionAutocomplete';
 
 interface Channel {
   id: string;
   name: string | null;
   is_group: boolean;
   created_at: string;
+}
+
+interface Bot {
+  id: string;
+  name: string;
+  profile_picture: string | null;
 }
 
 interface Message {
@@ -41,7 +48,13 @@ export default function ChannelPage() {
   const [sending, setSending] = useState(false);
   const [isCreateAIModalOpen, setIsCreateAIModalOpen] = useState(false);
   const [isCreateChatModalOpen, setIsCreateChatModalOpen] = useState(false);
+  const [channelBots, setChannelBots] = useState<Bot[]>([]);
+  const [showMentionAutocomplete, setShowMentionAutocomplete] = useState(false);
+  const [filteredBots, setFilteredBots] = useState<Bot[]>([]);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [cursorPosition, setCursorPosition] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -109,6 +122,32 @@ export default function ChannelPage() {
       if (messagesData) {
         setMessages(messagesData as any);
       }
+
+      // Fetch AI bots in this channel
+      const { data: memberBots } = await supabase
+        .from('channel_members')
+        .select(`
+          user_id,
+          users:user_id (
+            id,
+            name,
+            profile_picture,
+            is_bot
+          )
+        `)
+        .eq('channel_id', channelId);
+
+      if (memberBots) {
+        const bots = memberBots
+          .map((m: any) => m.users)
+          .filter((u: any) => u && u.is_bot)
+          .map((u: any) => ({
+            id: u.id,
+            name: u.name,
+            profile_picture: u.profile_picture,
+          }));
+        setChannelBots(bots);
+      }
     };
 
     loadChannelData();
@@ -155,6 +194,62 @@ export default function ChannelPage() {
     };
   }, [channelId, supabase]);
 
+  // Handle input change and @ mention detection
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart || 0;
+
+    setNewMessage(value);
+    setCursorPosition(cursorPos);
+
+    // Check for @ mention
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+
+    if (atIndex !== -1 && (atIndex === 0 || textBeforeCursor[atIndex - 1] === ' ')) {
+      const searchTerm = textBeforeCursor.slice(atIndex + 1).toLowerCase();
+      setMentionSearch(searchTerm);
+
+      const filtered = channelBots.filter(bot =>
+        bot.name.toLowerCase().includes(searchTerm)
+      );
+
+      setFilteredBots(filtered);
+      setShowMentionAutocomplete(filtered.length > 0);
+    } else {
+      setShowMentionAutocomplete(false);
+    }
+  };
+
+  // Handle bot selection from autocomplete
+  const handleBotSelect = (bot: Bot) => {
+    const textBeforeCursor = newMessage.slice(0, cursorPosition);
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+    const textAfterCursor = newMessage.slice(cursorPosition);
+
+    const newText = newMessage.slice(0, atIndex) + `@${bot.name} ` + textAfterCursor;
+    setNewMessage(newText);
+    setShowMentionAutocomplete(false);
+
+    // Focus back on input
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
+  };
+
+  // Extract mentioned bot IDs from message
+  const extractMentionedBots = (content: string): string[] => {
+    const mentionedBotIds: string[] = [];
+
+    channelBots.forEach(bot => {
+      if (content.includes(`@${bot.name}`)) {
+        mentionedBotIds.push(bot.id);
+      }
+    });
+
+    return mentionedBotIds;
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !userProfile || sending) return;
@@ -173,15 +268,48 @@ export default function ChannelPage() {
         throw new Error('You are not authorized to send messages in this channel');
       }
 
+      const messageContent = newMessage.trim();
+
+      // Insert user message
       const { error } = await supabase.from('messages').insert({
         channel_id: channelId,
         sender_id: userProfile.id,
-        content: newMessage.trim(),
+        content: messageContent,
       });
 
       if (error) throw error;
 
       setNewMessage('');
+      setShowMentionAutocomplete(false);
+
+      // Check for mentioned bots
+      const mentionedBotIds = extractMentionedBots(messageContent);
+
+      if (mentionedBotIds.length > 0) {
+        // Get recent messages for context
+        const recentMessages = messages.slice(-10).map(msg => ({
+          sender_name: msg.users.name,
+          content: msg.content,
+        }));
+
+        // Trigger AI responses for each mentioned bot
+        for (const botId of mentionedBotIds) {
+          try {
+            await fetch('/api/ai-reply', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                botId,
+                channelId,
+                messageContent,
+                recentMessages,
+              }),
+            });
+          } catch (aiError) {
+            console.error('Error triggering AI bot:', aiError);
+          }
+        }
+      }
     } catch (err: any) {
       console.error('Error sending message:', err);
       if (err.message.includes('not authorized')) {
@@ -294,13 +422,21 @@ export default function ChannelPage() {
         </div>
 
         {/* Message Input */}
-        <div className="border-t border-gray-200 p-4">
+        <div className="border-t border-gray-200 p-4 relative">
+          {showMentionAutocomplete && (
+            <MentionAutocomplete
+              bots={filteredBots}
+              onSelect={handleBotSelect}
+              position={{ top: 60, left: 16 }}
+            />
+          )}
           <form onSubmit={handleSendMessage} className="flex gap-2">
             <input
+              ref={inputRef}
               type="text"
               value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Type a message..."
+              onChange={handleInputChange}
+              placeholder="Type a message... (use @ to mention AI bots)"
               disabled={sending}
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none disabled:opacity-50"
             />

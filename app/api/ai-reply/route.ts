@@ -1,19 +1,19 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Initialize AI clients
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+// Initialize OpenRouter client
+const openrouter = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: 'https://openrouter.ai/api/v1',
 });
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
-const gemini = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || '');
+// Model mapping for OpenRouter
+const MODEL_MAP = {
+  gpt: 'openai/gpt-4-turbo',
+  claude: 'anthropic/claude-3.5-sonnet',
+  gemini: 'google/gemini-pro-1.5',
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -37,6 +37,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Bot not properly configured' }, { status: 400 });
     }
 
+    // Get the OpenRouter model name
+    const modelName = MODEL_MAP[botUser.model as keyof typeof MODEL_MAP];
+    if (!modelName) {
+      return NextResponse.json({ error: 'Invalid model type' }, { status: 400 });
+    }
+
     // Build conversation context from recent messages
     const conversationContext = recentMessages
       .map((msg: any) => `${msg.sender_name}: ${msg.content}`)
@@ -44,37 +50,17 @@ export async function POST(request: NextRequest) {
 
     const userPrompt = `Recent conversation:\n${conversationContext}\n\nUser message: ${messageContent}\n\nRespond naturally as part of this conversation.`;
 
-    let aiResponse = '';
+    // Call OpenRouter API
+    const completion = await openrouter.chat.completions.create({
+      model: modelName,
+      messages: [
+        { role: 'system', content: botUser.system_prompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+    });
 
-    // Call the appropriate AI model
-    if (botUser.model === 'gpt') {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
-        messages: [
-          { role: 'system', content: botUser.system_prompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.7,
-      });
-      aiResponse = completion.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
-    } else if (botUser.model === 'claude') {
-      const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        system: botUser.system_prompt,
-        messages: [
-          { role: 'user', content: userPrompt },
-        ],
-      });
-      aiResponse = message.content[0].type === 'text' ? message.content[0].text : 'Sorry, I could not generate a response.';
-    } else if (botUser.model === 'gemini') {
-      const model = gemini.getGenerativeModel({ model: 'gemini-pro' });
-      const prompt = `${botUser.system_prompt}\n\n${userPrompt}`;
-      const result = await model.generateContent(prompt);
-      aiResponse = result.response.text() || 'Sorry, I could not generate a response.';
-    } else {
-      return NextResponse.json({ error: 'Invalid model type' }, { status: 400 });
-    }
+    const aiResponse = completion.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
 
     // Insert AI response as a message from the bot
     const { error: insertError } = await supabase
